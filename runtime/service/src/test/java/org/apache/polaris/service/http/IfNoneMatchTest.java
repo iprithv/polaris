@@ -63,6 +63,30 @@ public class IfNoneMatchTest {
   }
 
   @Test
+  public void validMultipleETagsWithoutSpaceAfterComma() {
+    // RFC 7230 section 7 allows a bare comma (no surrounding whitespace) between list elements.
+    String etagValue1 = "W/\"etag1\"";
+    String etagValue2 = "W/\"etag2\"";
+
+    IfNoneMatch ifNoneMatch = IfNoneMatch.fromHeader(etagValue1 + "," + etagValue2);
+
+    Assertions.assertEquals(List.of(etagValue1, etagValue2), ifNoneMatch.eTags());
+  }
+
+  @Test
+  public void validMultipleETagsWithWhitespaceAroundComma() {
+    // RFC 7230 section 7 permits optional whitespace (spaces or tabs) on either side of the comma.
+    String etagValue1 = "W/\"etag1\"";
+    String etagValue2 = "W/\"etag2\"";
+    String etagValue3 = "W/\"etag3\"";
+
+    IfNoneMatch ifNoneMatch =
+        IfNoneMatch.fromHeader(etagValue1 + " , " + etagValue2 + "\t,\t" + etagValue3);
+
+    Assertions.assertEquals(List.of(etagValue1, etagValue2, etagValue3), ifNoneMatch.eTags());
+  }
+
+  @Test
   public void validWildcardIfNoneMatch() {
     IfNoneMatch ifNoneMatch = IfNoneMatch.fromHeader("*");
     Assertions.assertTrue(ifNoneMatch.isWildcard());
