@@ -1075,6 +1075,11 @@ public class AtomicOperationMetaStoreManager extends BaseMetaStoreManager {
       renamedEntityToReturn =
           this.persistEntityAfterChange(
               callCtx, ms, refreshEntityToRenameBuilder.build(), true, refreshEntityToRename);
+    } catch (EntityAlreadyExistsException e) {
+      // The target name was free at the check above but was taken concurrently before this write
+      // committed. Report it as an already-exists conflict rather than an opaque server error.
+      return new EntityResult(
+          BaseResult.ReturnStatus.ENTITY_ALREADY_EXISTS, e.getExistingEntity().getSubTypeCode());
     } catch (RetryOnConcurrencyException e) {
       return new EntityResult(
           BaseResult.ReturnStatus.TARGET_ENTITY_CONCURRENTLY_MODIFIED, e.getMessage());

@@ -212,4 +212,27 @@ public class AtomicOperationMetaStoreManagerTest {
     assertThat(result.getReturnStatus())
         .isEqualTo(BaseResult.ReturnStatus.TARGET_ENTITY_CONCURRENTLY_MODIFIED);
   }
+
+  @Test
+  public void testRenameMapsTargetCollisionToAlreadyExists() {
+    PolarisBaseEntity current =
+        new PolarisBaseEntity.Builder(buildEntity(1, 1)).name("my_role").build();
+    PolarisEntity renamed =
+        new PolarisEntity(new PolarisBaseEntity.Builder(current).name("my_role_renamed").build());
+    PolarisBaseEntity conflicting =
+        new PolarisBaseEntity.Builder(current).id(999L).name("my_role_renamed").build();
+
+    when(metaStore.lookupEntity(any(), anyLong(), anyLong(), anyInt())).thenReturn(current);
+    when(metaStore.lookupEntityIdAndSubTypeByName(
+            any(), anyLong(), anyLong(), anyInt(), anyString()))
+        .thenReturn(null);
+    // The target name was free at the check above but is taken by the time the write commits.
+    doThrow(new EntityAlreadyExistsException(conflicting))
+        .when(metaStore)
+        .writeEntity(any(), any(), anyBoolean(), any());
+
+    EntityResult result = manager.renameEntity(callCtx, null, current, null, renamed);
+
+    assertThat(result.getReturnStatus()).isEqualTo(BaseResult.ReturnStatus.ENTITY_ALREADY_EXISTS);
+  }
 }

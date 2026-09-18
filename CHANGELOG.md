@@ -134,6 +134,10 @@ request adding CHANGELOG notes for breaking (!) changes and possibly other secti
 
 ### Fixes
 
+- Renaming an entity (table, view, namespace, and so on) to a name that is taken concurrently
+  between the availability check and the write now surfaces as an already-exists conflict instead of
+  an opaque HTTP 500. The relational JDBC backend maps the uniqueness violation on the update path
+  the same way it already does on create.
 - OPA authorizer HTTP client creation no longer silently falls back to a default client when
   truststore or SSL setup fails. Misconfiguration (for example a bad truststore path) now fails
   startup instead of continuing with system trust and no configured response timeout.

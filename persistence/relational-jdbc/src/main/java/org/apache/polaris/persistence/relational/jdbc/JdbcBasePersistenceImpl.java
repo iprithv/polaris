@@ -215,29 +215,7 @@ public class JdbcBasePersistenceImpl implements BasePersistence, IntegrationPers
                 values,
                 realmId));
       } catch (SQLException e) {
-        if (datasourceOperations.isUniquenessConstraintViolation(e)) {
-          PolarisBaseEntity existingEntity =
-              lookupEntityByName(
-                  callCtx,
-                  entity.getCatalogId(),
-                  entity.getParentId(),
-                  entity.getTypeCode(),
-                  entity.getName());
-          // This happens in two scenarios:
-          // 1. PRIMARY KEY violated
-          // 2. UNIQUE CONSTRAINT on (realm_id, catalog_id, parent_id, type_code, name) violated
-          // With SERIALIZABLE isolation, the conflicting entity may _not_ be visible and
-          // existingEntity can be null. We cannot distinguish a same-id idempotent retry from a
-          // genuine name collision in that case, so we must report a concurrency conflict rather
-          // than fabricate the entity we were trying to create.
-          if (existingEntity != null) {
-            throw new EntityAlreadyExistsException(existingEntity, e);
-          }
-          throw new RetryOnConcurrencyException(
-              e, "Conflicting entity is not visible in the current transaction snapshot; retry");
-        }
-        throw new RuntimeException(
-            String.format("Failed to write entity due to %s", e.getMessage()), e);
+        throw toEntityWriteException(callCtx, entity, e);
       }
     } else {
       // CAS on both entity_version and grant_records_version because grant operations only
@@ -274,10 +252,43 @@ public class JdbcBasePersistenceImpl implements BasePersistence, IntegrationPers
               originalEntity.getGrantRecordsVersion());
         }
       } catch (SQLException e) {
-        throw new RuntimeException(
-            String.format("Failed to write entity due to %s", e.getMessage()), e);
+        // A uniqueness violation here means the new name collides with an entity created or renamed
+        // concurrently after the caller checked that the target name was free (for example a rename
+        // whose destination was taken between the availability check and this update).
+        throw toEntityWriteException(callCtx, entity, e);
       }
     }
+  }
+
+  /**
+   * Translates a failed entity write into the appropriate domain exception.
+   *
+   * <p>A uniqueness-constraint violation (a primary-key clash on retry, or a collision on the
+   * {@code (realm_id, catalog_id, parent_id, type_code, name)} constraint) means another entity
+   * already holds the target name. If that entity is visible in the current transaction snapshot we
+   * surface {@link EntityAlreadyExistsException}; otherwise (for example under SERIALIZABLE
+   * isolation, where the conflicting row may not be visible) we cannot distinguish an idempotent
+   * retry from a genuine collision, so we surface {@link RetryOnConcurrencyException} to trigger a
+   * retry. Any other failure is wrapped as a generic {@link RuntimeException}.
+   */
+  private RuntimeException toEntityWriteException(
+      PolarisCallContext callCtx, PolarisBaseEntity entity, SQLException e) {
+    if (datasourceOperations.isUniquenessConstraintViolation(e)) {
+      PolarisBaseEntity existingEntity =
+          lookupEntityByName(
+              callCtx,
+              entity.getCatalogId(),
+              entity.getParentId(),
+              entity.getTypeCode(),
+              entity.getName());
+      if (existingEntity != null) {
+        return new EntityAlreadyExistsException(existingEntity, e);
+      }
+      return new RetryOnConcurrencyException(
+          e, "Conflicting entity is not visible in the current transaction snapshot; retry");
+    }
+    return new RuntimeException(
+        String.format("Failed to write entity due to %s", e.getMessage()), e);
   }
 
   @Override

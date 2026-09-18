@@ -196,6 +196,91 @@ class JdbcBasePersistenceImplTest {
         .withMessageContaining("not visible");
   }
 
+  @ParameterizedTest
+  @ValueSource(ints = {1, 2, 3, 4})
+  void writeEntity_updateUniquenessViolationWithVisibleConflict_throwsEntityAlreadyExists(
+      int schemaVersion) throws SQLException {
+    DatasourceOperations datasourceOperations = Mockito.mock(DatasourceOperations.class);
+    when(datasourceOperations.getDatabaseType()).thenReturn(DatabaseType.H2);
+    doThrow(new SQLException("Unique constraint violation", "23505"))
+        .when(datasourceOperations)
+        .executeUpdate(any(QueryGenerator.PreparedQuery.class));
+    doCallRealMethod()
+        .when(datasourceOperations)
+        .isUniquenessConstraintViolation(any(SQLException.class));
+
+    JdbcBasePersistenceImpl basePersistence =
+        new JdbcBasePersistenceImpl(
+            new PolarisDefaultDiagServiceImpl(),
+            datasourceOperations,
+            RANDOM_SECRETS,
+            REALM_CONTEXT.getRealmIdentifier(),
+            schemaVersion);
+    PolarisCallContext callCtx = new PolarisCallContext(REALM_CONTEXT, basePersistence);
+
+    PolarisBaseEntity original =
+        new PolarisBaseEntity.Builder()
+            .id(101L)
+            .catalogId(0L)
+            .parentId(0L)
+            .typeCode(PolarisEntityType.PRINCIPAL.getCode())
+            .subTypeCode(PolarisEntitySubType.NULL_SUBTYPE.getCode())
+            .name("original_name")
+            .entityVersion(1)
+            .grantRecordsVersion(0)
+            .createTimestamp(System.currentTimeMillis())
+            .build();
+    PolarisBaseEntity renamed = new PolarisBaseEntity.Builder(original).name("taken_name").build();
+    // The entity that already holds the target name is visible in this transaction snapshot.
+    Mockito.<List<?>>when(datasourceOperations.executeSelect(any(), any()))
+        .thenReturn(List.of(new PolarisBaseEntity.Builder(renamed).id(999L).build()));
+
+    assertThatExceptionOfType(EntityAlreadyExistsException.class)
+        .isThrownBy(() -> basePersistence.writeEntity(callCtx, renamed, true, original));
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {1, 2, 3, 4})
+  void writeEntity_updateUniquenessViolationWithInvisibleConflict_throwsRetryOnConcurrency(
+      int schemaVersion) throws SQLException {
+    DatasourceOperations datasourceOperations = Mockito.mock(DatasourceOperations.class);
+    when(datasourceOperations.getDatabaseType()).thenReturn(DatabaseType.H2);
+    doThrow(new SQLException("Unique constraint violation", "23505"))
+        .when(datasourceOperations)
+        .executeUpdate(any(QueryGenerator.PreparedQuery.class));
+    Mockito.<List<?>>when(datasourceOperations.executeSelect(any(), any())).thenReturn(List.of());
+    doCallRealMethod()
+        .when(datasourceOperations)
+        .isUniquenessConstraintViolation(any(SQLException.class));
+
+    JdbcBasePersistenceImpl basePersistence =
+        new JdbcBasePersistenceImpl(
+            new PolarisDefaultDiagServiceImpl(),
+            datasourceOperations,
+            RANDOM_SECRETS,
+            REALM_CONTEXT.getRealmIdentifier(),
+            schemaVersion);
+    PolarisCallContext callCtx = new PolarisCallContext(REALM_CONTEXT, basePersistence);
+
+    PolarisBaseEntity original =
+        new PolarisBaseEntity.Builder()
+            .id(101L)
+            .catalogId(0L)
+            .parentId(0L)
+            .typeCode(PolarisEntityType.PRINCIPAL.getCode())
+            .subTypeCode(PolarisEntitySubType.NULL_SUBTYPE.getCode())
+            .name("original_name")
+            .entityVersion(1)
+            .grantRecordsVersion(0)
+            .createTimestamp(System.currentTimeMillis())
+            .build();
+    PolarisBaseEntity renamed = new PolarisBaseEntity.Builder(original).name("taken_name").build();
+
+    assertThatExceptionOfType(RetryOnConcurrencyException.class)
+        .isThrownBy(() -> basePersistence.writeEntity(callCtx, renamed, true, original))
+        .withMessageContaining("not visible");
+  }
+
   @Test
   void withRetries_propagatesRetryOnConcurrencyExceptionWithoutUnwrapping() throws SQLException {
     JdbcConnectionPool dataSource =
